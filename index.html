@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
     --bg:#E7E9EC; --surface:#FFFFFF; --surface-2:#F5F6F8;
@@ -167,6 +168,39 @@
   .empty{text-align:center; padding:50px 24px; color:var(--sub);}
   .empty .ic{font-size:34px; margin-bottom:10px;}
 
+  /* 操作バー（取込・共有） */
+  .actbar{display:flex; gap:8px; margin:10px 16px 0; flex-wrap:wrap;}
+  .actbar .btn{flex:1; min-width:120px;}
+
+  /* 図面（是正マップ） */
+  .dwg-list{display:flex; flex-direction:column; gap:10px;}
+  .dwg-card{display:flex; align-items:center; gap:12px; padding:13px 15px; cursor:pointer;}
+  .dwg-thumb{width:54px; height:54px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); object-fit:cover; flex:none;}
+  .dwg-card .nm{font-weight:800; font-size:15px;}
+  .dwg-card .sub{font-size:12px; color:var(--sub); margin-top:2px;}
+  .dwg-toolbar{display:flex; gap:8px; align-items:center; margin:0 16px 10px; flex-wrap:wrap;}
+  .addmode{font-size:13px; font-weight:800; color:var(--sub); display:flex; align-items:center; gap:8px;}
+  .toggle{width:46px; height:27px; border-radius:99px; background:var(--line); position:relative; transition:.15s; flex:none;}
+  .toggle.on{background:var(--accent);}
+  .toggle i{position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:.15s;}
+  .toggle.on i{left:22px;}
+  .split{display:flex; flex-direction:column; gap:14px; margin:0 16px 16px;}
+  .canvas-wrap{position:relative; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#fff; box-shadow:var(--shadow);}
+  .canvas-wrap img{width:100%; display:block;}
+  .canvas-wrap.adding{cursor:crosshair;}
+  .pin{position:absolute; transform:translate(-50%,-50%); width:26px; height:26px; border-radius:50%; background:var(--ng); color:#fff; font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 0 0 1.5px var(--ng),0 2px 5px rgba(0,0,0,.3); cursor:pointer; padding:0;}
+  .pin.done{background:var(--pass); box-shadow:0 0 0 1.5px var(--pass),0 2px 5px rgba(0,0,0,.3);}
+  .pin.sel{outline:3px solid var(--safety); outline-offset:1px; z-index:5;}
+  .pinrow{padding:12px 14px; border-top:1px solid var(--line-2);}
+  .pinrow:first-child{border-top:none;}
+  .pinrow.sel{background:#FFF8E6;}
+  .pinrow .ph{display:flex; align-items:center; gap:10px;}
+  .pinno{width:26px;height:26px;border-radius:50%;background:var(--ng);color:#fff;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .pinno.done{background:var(--pass);}
+  .pinrow input{width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 10px; background:var(--surface-2); margin-top:7px;}
+  .dwg-empty{text-align:center; padding:30px 18px; color:var(--sub); font-size:13px;}
+  .loading{text-align:center; padding:48px; color:var(--sub);}
+
   /* ---- PC（広い画面）レイアウト ---- */
   .desktop-only{display:none !important;}
   @media (min-width:900px){
@@ -189,6 +223,9 @@
     .summary{margin-top:20px;}
     .dhead,.exrow,.cat,.pad{max-width:780px; margin-left:auto; margin-right:auto;}
     .dhead{margin-top:20px;}
+    .split{display:grid; grid-template-columns:1.3fr 1fr; gap:16px; align-items:start;}
+    .canvas-wrap{position:sticky; top:16px;}
+    .dwg-toolbar{margin-top:4px;}
   }
   @media (hover:hover) and (min-width:900px){
     .prop,.insp{transition:border-color .12s, box-shadow .12s;}
@@ -215,6 +252,11 @@
     .pr-cat td{background:#f3f3f3; font-weight:800;}
     .pr-j{font-weight:800; text-align:center; white-space:nowrap;}
     .pr-foot{margin-top:12px; font-size:11px; display:flex; gap:30px;}
+    .pd-wrap{display:flex; gap:14px; align-items:flex-start;}
+    .pd-img{position:relative; width:56%; flex:none;}
+    .pd-img img{width:100%; display:block; border:1px solid #999;}
+    .pd-pin{position:absolute; transform:translate(-50%,-50%); width:18px; height:18px; border-radius:50%; background:#C8102E; color:#fff; font-size:10px; font-weight:800; display:flex; align-items:center; justify-content:center; border:1.5px solid #fff;}
+    .pd-table{flex:1;}
   }
 </style>
 </head>
@@ -223,7 +265,7 @@
 <script type="text/babel" data-presets="react">
 /* リノベ検査野帳 — 物件単位 / 中間・内装・設備
    単一HTML（React 18 + Babel + XLSX, CDN）で動作。GitHub Pages配置可。 */
-const {useState,useEffect,useMemo,createContext,useContext} = React;
+const {useState,useEffect,useMemo,useRef,createContext,useContext} = React;
 
 /* ---------- storage（localStorageが使えれば永続化、ダメならメモリ） ---------- */
 const KEY="reno-inspect:v2";
@@ -235,6 +277,18 @@ const store={
 const uid=()=>Math.random().toString(36).slice(2,9);
 const todayISO=()=>new Date().toISOString().slice(0,10);
 const fmtDate=s=>{ if(!s) return "—"; const [y,m,d]=s.split("-"); return `${y}.${m}.${d}`; };
+
+/* ---------- 画像はIndexedDBへ（PDF図面は容量が大きいため） ---------- */
+function idbOpen(){ return new Promise((res,rej)=>{ const r=indexedDB.open("reno-inspect-db",1);
+  r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains("img")) r.result.createObjectStore("img"); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbSet(k,v){ try{ const db=await idbOpen(); return await new Promise((res,rej)=>{ const tx=db.transaction("img","readwrite"); tx.objectStore("img").put(v,k); tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error); }); }catch(e){ mem["img:"+k]=v; return false; } }
+async function idbGet(k){ try{ const db=await idbOpen(); return await new Promise(res=>{ const tx=db.transaction("img","readonly"); const rq=tx.objectStore("img").get(k); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>res(null); }); }catch(e){ return mem["img:"+k]||null; } }
+async function idbDel(k){ try{ const db=await idbOpen(); const tx=db.transaction("img","readwrite"); tx.objectStore("img").delete(k); }catch(e){ delete mem["img:"+k]; } }
+
+/* ---------- pdf.js ---------- */
+let _pdfReady=false;
+function ensurePdf(){ if(_pdfReady) return; if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; _pdfReady=true; } }
 
 /* ---------- 検査種別・初期テンプレート ---------- */
 const TYPES={
@@ -293,6 +347,8 @@ const Ico={
   pdf:p=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="17" height="17" {...p}><path d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M15 2v5h5"/><path d="M8 14h8M8 18h5"/></svg>,
   edit:p=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>,
   trash:p=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" {...p}><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>,
+  imp:p=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/></svg>,
+  exp:p=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 15V3"/><path d="M7 8l5-5 5 5"/></svg>,
 };
 
 /* ================= ダイアログ（prompt/confirm の代替・サンドボックスでも動く） ================= */
@@ -303,6 +359,7 @@ function DialogProvider({children}){
   const api={
     input:(o)=>new Promise(res=>setSt({type:"input",value:o.value||"",placeholder:o.placeholder||"",ok:o.ok||"保存",title:o.title,resolve:res})),
     confirm:(o)=>new Promise(res=>setSt({type:"confirm",ok:o.ok||"削除",danger:o.danger!==false,title:o.title,message:o.message,resolve:res})),
+    alert:(o)=>new Promise(res=>setSt({type:"alert",ok:o.ok||"OK",title:o.title,message:o.message,resolve:res})),
   };
   const finish=(v)=>{ const r=st.resolve; setSt(null); r(v); };
   return <DialogCtx.Provider value={api}>
@@ -320,9 +377,9 @@ function DialogView({st,finish}){
             onChange={e=>setV(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")finish(v.trim()||null);}}/>
         : <p>{st.message}</p>}
       <div className="acts">
-        <button className="btn btn-ghost btn-block" onClick={()=>finish(st.type==="confirm"?false:null)}>キャンセル</button>
-        <button className="btn btn-primary btn-block" style={st.danger?{background:"var(--ng)"}:null}
-          onClick={()=>finish(st.type==="confirm"?true:(v.trim()||null))}>{st.ok}</button>
+        {st.type!=="alert" && <button className="btn btn-ghost btn-block" onClick={()=>finish(st.type==="confirm"?false:null)}>キャンセル</button>}
+        <button className="btn btn-primary btn-block" style={(st.danger&&st.type==="confirm")?{background:"var(--ng)"}:null}
+          onClick={()=>finish(st.type==="confirm"?true:st.type==="alert"?true:(v.trim()||null))}>{st.ok}</button>
       </div>
     </div>
   </div>;
@@ -340,21 +397,25 @@ function App(){
 
   const prop=properties.find(p=>p.id===view.propId)||null;
   const insp=prop&&view.inspId?prop.inspections.find(i=>i.id===view.inspId):null;
+  const drawing=prop&&view.drawingId?(prop.drawings||[]).find(d=>d.id===view.drawingId):null;
 
   const updateProp=(id,fn)=>setProperties(list=>list.map(p=>p.id===id?fn(p):p));
   const updateInsp=(pid,iid,fn)=>updateProp(pid,p=>({...p,inspections:p.inspections.map(i=>i.id===iid?fn(i):i)}));
 
-  const doPrint=(prop,insps)=>{ setPrintT({prop,insps}); setTimeout(()=>window.print(),80); };
+  const doPrint=(prop,insps)=>{ setPrintT({kind:"inspection",prop,insps}); setTimeout(()=>window.print(),80); };
+  const doPrintDrawing=(prop,drawing,imgUrl)=>{ setPrintT({kind:"drawing",prop,drawing,imgUrl}); setTimeout(()=>window.print(),140); };
 
   let title="";
   if(view.name==="property"&&prop) title=prop.name;
   if(view.name==="detail"&&insp) title=TYPES[insp.type].name;
+  if(view.name==="drawing"&&drawing) title=drawing.name;
 
   return <div className="app">
     <div className="topbar screen"><div className="wrap">
       {view.name==="dash" && <div className="brand"><b>リノベ検査野帳</b><span>物件・中間・内装・設備</span></div>}
       {view.name==="property" && <><button className="back-btn" onClick={()=>setView({name:"dash"})}><Ico.back/>物件一覧</button><div className="ttl">{title}</div></>}
       {view.name==="detail" && <><button className="back-btn" onClick={()=>setView({name:"property",propId:view.propId})}><Ico.back/>{prop?prop.name:"戻る"}</button><div className="ttl">{title}</div></>}
+      {view.name==="drawing" && <><button className="back-btn" onClick={()=>setView({name:"property",propId:view.propId})}><Ico.back/>{prop?prop.name:"戻る"}</button><div className="ttl">{title}</div></>}
       {view.name==="templates" && <div className="brand"><b>項目テンプレート</b></div>}
     </div></div>
     <div className="hazard screen"></div>
@@ -363,11 +424,14 @@ function App(){
       {view.name==="dash" && <Dashboard properties={properties}
         open={p=>setView({name:"property",propId:p.id})}
         onAdd={p=>{setProperties(l=>[p,...l]); setView({name:"property",propId:p.id});}}
-        onExportAll={()=>exportAllExcel(properties)} />}
+        onExportAll={()=>exportAllExcel(properties)}
+        onShare={()=>exportShareExcel(properties)}
+        onImport={imported=>setProperties(cur=>mergeImported(cur,imported))} />}
 
       {view.name==="property" && prop && <PropertyDetail prop={prop}
         update={fn=>updateProp(prop.id,fn)} templates={templates}
         openInsp={i=>setView({name:"detail",propId:prop.id,inspId:i.id})}
+        openDrawing={d=>setView({name:"drawing",propId:prop.id,drawingId:d.id})}
         onDelete={()=>{ setProperties(l=>l.filter(p=>p.id!==prop.id)); setView({name:"dash"}); }}
         onExcel={()=>exportPropertyExcel(prop)}
         onPdf={()=>doPrint(prop,prop.inspections)} />}
@@ -378,6 +442,11 @@ function App(){
         onExcel={()=>exportInspectionExcel(prop,insp)}
         onPdf={()=>doPrint(prop,[insp])} />}
 
+      {view.name==="drawing" && prop && drawing && <DrawingView prop={prop} drawing={drawing}
+        update={fn=>updateProp(prop.id,p=>({...p,drawings:(p.drawings||[]).map(d=>d.id===drawing.id?fn(d):d)}))}
+        onDelete={()=>{ if(drawing.imgKey) idbDel(drawing.imgKey); updateProp(prop.id,p=>({...p,drawings:(p.drawings||[]).filter(d=>d.id!==drawing.id)})); setView({name:"property",propId:prop.id}); }}
+        onPdf={imgUrl=>doPrintDrawing(prop,drawing,imgUrl)} />}
+
       {view.name==="templates" && <Templates templates={templates} setTemplates={setTemplates} />}
     </div>
 
@@ -386,15 +455,30 @@ function App(){
       <button className={view.name==="templates"?"on":""} onClick={()=>setView({name:"templates"})}><Ico.tmpl/>項目テンプレート</button>
     </div></nav>
 
-    {printT && <PrintReport prop={printT.prop} insps={printT.insps} />}
+    {printT && (printT.kind==="drawing"
+      ? <PrintDrawing prop={printT.prop} drawing={printT.drawing} imgUrl={printT.imgUrl} />
+      : <PrintReport prop={printT.prop} insps={printT.insps} />)}
   </div>;
 }
 
 /* ================= ダッシュボード（物件一覧） ================= */
-function Dashboard({properties,open,onAdd,onExportAll}){
+function Dashboard({properties,open,onAdd,onExportAll,onShare,onImport}){
+  const dlg=useDialog();
+  const fileRef=useRef(null);
   const [q,setQ]=useState("");
   const [onlyZan,setOnlyZan]=useState(false);
   const [showNew,setShowNew]=useState(false);
+
+  const onFile=async(e)=>{
+    const f=e.target.files&&e.target.files[0]; e.target.value=""; if(!f) return;
+    try{
+      const buf=await f.arrayBuffer(); const wb=XLSX.read(buf,{type:"array"});
+      const imported=parseWorkbook(wb);
+      if(!imported.length){ await dlg.alert({title:"取込できませんでした",message:"検査データが見つかりませんでした。「共有Excelを出力」で書き出したファイルを取り込んでください。"}); return; }
+      onImport(imported);
+      await dlg.alert({title:"取込完了",message:`${imported.length}件の物件を取り込みました。同名の物件は検査をマージしています。`});
+    }catch(err){ await dlg.alert({title:"エラー",message:"ファイルを読み込めませんでした。Excel(.xlsx)を選んでください。"}); }
+  };
 
   const tot=useMemo(()=>{
     let insp=0,ng=0,zan=0;
@@ -419,11 +503,15 @@ function Dashboard({properties,open,onAdd,onExportAll}){
       <div className="blk"><div className="lab">是正残 計</div><div className="num warn mono">{tot.zan}</div></div>
     </div></div>
 
+    <div className="actbar">
+      <button className="btn btn-ghost btn-sm" onClick={()=>fileRef.current&&fileRef.current.click()}><Ico.imp/>Excelを取込</button>
+      <button className="btn btn-ghost btn-sm" onClick={onShare}><Ico.exp/>共有Excelを出力</button>
+      <button className="btn btn-ghost btn-sm" onClick={onExportAll}><Ico.xls/>一覧サマリ</button>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={onFile}/>
+    </div>
+
     <div className="sec-head"><h2>物件一覧</h2>
-      <div className="row">
-        <button className="btn btn-ghost btn-sm" onClick={onExportAll}><Ico.xls/>一覧をExcel</button>
-        <button className="btn btn-primary btn-sm desktop-only" onClick={()=>setShowNew(true)}><Ico.plus/>物件を追加</button>
-      </div></div>
+      <button className="btn btn-primary btn-sm desktop-only" onClick={()=>setShowNew(true)}><Ico.plus/>物件を追加</button></div>
 
     <div className="toolbar">
       <div className="search"><Ico.search/><input placeholder="物件名で検索" value={q} onChange={e=>setQ(e.target.value)}/></div>
@@ -477,10 +565,11 @@ function NewProperty({onClose,onCreate}){
 }
 
 /* ================= 物件詳細（検査一覧） ================= */
-function PropertyDetail({prop,update,templates,openInsp,onDelete,onExcel,onPdf}){
+function PropertyDetail({prop,update,templates,openInsp,openDrawing,onDelete,onExcel,onPdf}){
   const dlg=useDialog();
   const m=propMetrics(prop);
   const [showNew,setShowNew]=useState(false);
+  const [showDwg,setShowDwg]=useState(false);
   const setHead=patch=>update(p=>({...p,...patch}));
 
   const remove=async()=>{ if(await dlg.confirm({title:"物件を削除",message:`「${prop.name}」と、含まれる検査をすべて削除します。`})) onDelete(); };
@@ -529,7 +618,15 @@ function PropertyDetail({prop,update,templates,openInsp,onDelete,onExcel,onPdf})
         </div>;})}
     </div>
 
+    <div className="sec-head"><h2>図面（是正マップ）</h2>
+      <button className="btn btn-primary btn-sm" onClick={()=>setShowDwg(true)}><Ico.plus/>図面を追加</button></div>
+    <div className="insp-list dwg-list" style={{paddingTop:0}}>
+      {(prop.drawings||[]).length===0 && <div className="empty"><div className="ic">📐</div>PDF図面を取り込み、是正箇所に番号を付けて管理できます。</div>}
+      {(prop.drawings||[]).map(d=><DrawingCard key={d.id} d={d} onOpen={()=>openDrawing(d)} />)}
+    </div>
+
     {showNew && <NewInspection templates={templates} onClose={()=>setShowNew(false)} onCreate={addInsp} />}
+    {showDwg && <ImportDrawing onClose={()=>setShowDwg(false)} onCreate={d=>{ update(p=>({...p,drawings:[...(p.drawings||[]),d]})); setShowDwg(false); openDrawing(d); }} />}
   </>;
 }
 
@@ -762,6 +859,218 @@ function Sheet({title,sub,children,onClose}){
   return <div className="ov" onClick={e=>{if(e.target.classList.contains("ov"))onClose();}}>
     <div className="sheet"><h3>{title}</h3>{sub&&<div className="sub">{sub}</div>}{children}</div>
   </div>;
+}
+
+/* ================= 図面（是正マップ） ================= */
+function ImportDrawing({onClose,onCreate}){
+  const dlg=useDialog();
+  const [name,setName]=useState("");
+  const [doc,setDoc]=useState(null);
+  const [pages,setPages]=useState(0);
+  const [page,setPage]=useState(1);
+  const [busy,setBusy]=useState(false);
+  const fileRef=useRef(null);
+
+  const pick=async(e)=>{
+    const f=e.target.files&&e.target.files[0]; e.target.value=""; if(!f) return;
+    ensurePdf();
+    if(!window.pdfjsLib){ await dlg.alert({title:"PDFを読み込めません",message:"PDF表示ライブラリの読み込みに失敗しました。通信環境をご確認のうえ再度お試しください。"}); return; }
+    setBusy(true);
+    try{ const buf=await f.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; setDoc(pdf); setPages(pdf.numPages); setPage(1); setName(n=>n||f.name.replace(/\.pdf$/i,"")); }
+    catch(err){ await dlg.alert({title:"エラー",message:"PDFの読み込みに失敗しました。"}); }
+    setBusy(false);
+  };
+  const create=async()=>{
+    if(!doc){ await dlg.alert({title:"PDF未選択",message:"先にPDFファイルを選択してください。"}); return; }
+    setBusy(true);
+    try{
+      const pg=await doc.getPage(page);
+      const base=pg.getViewport({scale:1});
+      const scale=Math.min(2200/base.width,4);
+      const vp=pg.getViewport({scale});
+      const canvas=document.createElement("canvas"); canvas.width=Math.round(vp.width); canvas.height=Math.round(vp.height);
+      await pg.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+      const url=canvas.toDataURL("image/jpeg",0.82);
+      const key="dwg_"+uid(); await idbSet(key,url);
+      onCreate({id:uid(),name:(name||"図面").trim(),imgKey:key,w:canvas.width,h:canvas.height,pins:[],created:Date.now()});
+    }catch(err){ setBusy(false); await dlg.alert({title:"エラー",message:"図面の生成に失敗しました。"}); }
+  };
+
+  return <Sheet title="図面を追加（PDF取込）" sub="PDFの図面を取り込み、是正箇所に番号を付けて管理します。" onClose={onClose}>
+    <div className="flabel">図面名</div>
+    <input className="finput" placeholder="例：1階 平面図" value={name} onChange={e=>setName(e.target.value)}/>
+    <div className="flabel">PDFファイル</div>
+    <button className="btn btn-ghost btn-block" onClick={()=>fileRef.current&&fileRef.current.click()}>{busy&&!doc?"読み込み中…":doc?`選択済み（全${pages}ページ）`:"PDFを選択"}</button>
+    <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{display:"none"}} onChange={pick}/>
+    {pages>1 && <><div className="flabel">使用するページ</div>
+      <input className="finput" type="number" min="1" max={pages} value={page} onChange={e=>setPage(Math.max(1,Math.min(pages,Number(e.target.value)||1)))}/></>}
+    <div className="sheet-actions">
+      <button className="btn btn-ghost btn-block" onClick={onClose}>キャンセル</button>
+      <button className="btn btn-primary btn-block" onClick={create} disabled={busy||!doc} style={(busy||!doc)?{opacity:.5}:null}>{busy&&doc?"処理中…":"取り込む"}</button>
+    </div>
+  </Sheet>;
+}
+
+function DrawingCard({d,onOpen}){
+  const [thumb,setThumb]=useState(null);
+  useEffect(()=>{ let on=true; if(d.imgKey) idbGet(d.imgKey).then(u=>{ if(on) setThumb(u); }); return ()=>{on=false;}; },[d.imgKey]);
+  const open=d.pins.length, done=d.pins.filter(p=>p.done).length;
+  return <div className="dwg-card card" onClick={onOpen}>
+    {thumb?<img className="dwg-thumb" src={thumb} alt=""/>:<div className="dwg-thumb"/>}
+    <div style={{flex:1}}><div className="nm">{d.name}</div>
+      <div className="sub">番号 {open}件{open>0?` ・ 残 ${open-done} / 完了 ${done}`:""}</div></div>
+    <Ico.chev/>
+  </div>;
+}
+
+function DrawingView({prop,drawing,update,onDelete,onPdf}){
+  const dlg=useDialog();
+  const [imgUrl,setImgUrl]=useState(null);
+  const [adding,setAdding]=useState(false);
+  const [sel,setSel]=useState(null);
+  useEffect(()=>{ let on=true; if(drawing.imgKey) idbGet(drawing.imgKey).then(u=>{ if(on) setImgUrl(u); }); return ()=>{on=false;}; },[drawing.imgKey]);
+
+  const nextNo=()=>{ const ns=drawing.pins.map(p=>Number(p.no)||0); return (ns.length?Math.max(...ns):0)+1; };
+  const onCanvasClick=(e)=>{
+    if(!adding) return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    const x=Math.round(((e.clientX-rect.left)/rect.width)*1000)/10;
+    const y=Math.round(((e.clientY-rect.top)/rect.height)*1000)/10;
+    const pin={id:uid(),no:nextNo(),room:"",issue:"",due:"",done:false,x,y};
+    update(d=>({...d,pins:[...d.pins,pin]})); setSel(pin.id); setAdding(false);
+  };
+  const setPin=(id,patch)=>update(d=>({...d,pins:d.pins.map(p=>p.id===id?{...p,...patch}:p)}));
+  const delPin=async(id)=>{ const p=drawing.pins.find(x=>x.id===id); if(await dlg.confirm({title:"番号を削除",message:`番号 ${p?p.no:""} を削除します。`})){ update(d=>({...d,pins:d.pins.filter(x=>x.id!==id)})); setSel(null); } };
+  const rename=async()=>{ const n=await dlg.input({title:"図面名を編集",value:drawing.name}); if(n) update(d=>({...d,name:n})); };
+  const sorted=drawing.pins.slice().sort((a,b)=>a.no-b.no);
+
+  return <>
+    <div className="dhead card">
+      <div className="row" style={{justifyContent:"space-between",alignItems:"center"}}>
+        <div><div className="site">{drawing.name}</div><div className="muted" style={{fontSize:12.5,marginTop:2}}>{prop.name}</div></div>
+        <div className="row">
+          <button onClick={rename} style={{color:"var(--sub)",display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:700}}><Ico.edit/>名称</button>
+          <button onClick={onDelete} style={{color:"var(--ng)",display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:700}}><Ico.trash/>削除</button>
+        </div>
+      </div>
+    </div>
+
+    <div className="dwg-toolbar">
+      <div className="addmode"><button className={"toggle"+(adding?" on":"")} onClick={()=>setAdding(a=>!a)}><i/></button>{adding?"タップで番号を追加":"番号を追加"}</div>
+      <div style={{flex:1}}/>
+      <button className="btn btn-ghost btn-sm" onClick={()=>onPdf(imgUrl)}><Ico.pdf/>PDF出力</button>
+    </div>
+
+    <div className="split">
+      <div className={"canvas-wrap"+(adding?" adding":"")} onClick={onCanvasClick}>
+        {imgUrl?<img src={imgUrl} alt={drawing.name}/>:<div className="loading">図面を読み込み中…</div>}
+        {imgUrl&&drawing.pins.map(p=><button key={p.id} className={"pin"+(p.done?" done":"")+(sel===p.id?" sel":"")}
+          style={{left:p.x+"%",top:p.y+"%"}} onClick={e=>{e.stopPropagation(); setSel(p.id);}}>{p.no}</button>)}
+      </div>
+
+      <div className="cat-body">
+        {sorted.length===0 && <div className="dwg-empty">「番号を追加」をオンにして図面をタップすると、是正箇所に番号が付きます。</div>}
+        {sorted.map(p=><div key={p.id} className={"pinrow"+(sel===p.id?" sel":"")} onClick={()=>setSel(p.id)}>
+          <div className="ph"><span className={"pinno"+(p.done?" done":"")}>{p.no}</span>
+            <input style={{margin:0,flex:1}} placeholder="部屋名" value={p.room} onChange={e=>setPin(p.id,{room:e.target.value})}/>
+            <button onClick={e=>{e.stopPropagation(); delPin(p.id);}} style={{color:"var(--ng)"}}><Ico.trash/></button></div>
+          <input placeholder="是正内容" value={p.issue} onChange={e=>setPin(p.id,{issue:e.target.value})}/>
+          <div className="row" style={{marginTop:7,alignItems:"center"}}>
+            <input style={{margin:0,flex:1}} type="date" value={p.due} onChange={e=>setPin(p.id,{due:e.target.value})}/>
+            <button className="chip" style={p.done?{background:"var(--pass-bg)",borderColor:"#bfe3cd",color:"var(--pass)"}:null} onClick={e=>{e.stopPropagation(); setPin(p.id,{done:!p.done});}}>{p.done?"完了":"未完了"}</button>
+          </div>
+        </div>)}
+      </div>
+    </div>
+  </>;
+}
+
+function PrintDrawing({prop,drawing,imgUrl}){
+  const pins=drawing.pins.slice().sort((a,b)=>a.no-b.no);
+  return <div className="print-area">
+    <div className="pr-h"><div className="t">{drawing.name}　是正マップ</div><div style={{textAlign:"right",fontSize:12}}>リノベ検査野帳</div></div>
+    <div className="pr-meta">
+      <div><b>物件名</b>{prop.name}</div><div><b>顧客</b>{prop.client||"—"}</div>
+      <div><b>是正件数</b>{pins.length}（残 {pins.filter(p=>!p.done).length}）</div><div><b>出力日</b>{fmtDate(todayISO())}</div>
+    </div>
+    <div className="pd-wrap">
+      <div className="pd-img">{imgUrl&&<img src={imgUrl} alt=""/>}
+        {pins.map(p=><span key={p.id} className="pd-pin" style={{left:p.x+"%",top:p.y+"%"}}>{p.no}</span>)}</div>
+      <table className="pr pd-table">
+        <thead><tr><th style={{width:"10%"}}>番号</th><th style={{width:"26%"}}>部屋名</th><th>是正内容</th><th style={{width:"22%"}}>完了予定日</th></tr></thead>
+        <tbody>{pins.map(p=><tr key={p.id}><td className="pr-j">{p.no}{p.done?" ✓":""}</td><td>{p.room||""}</td><td>{p.issue||""}</td><td>{p.due?fmtDate(p.due):""}</td></tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+/* ================= Excel 共有出力／取込 ================= */
+function judgeFromLabel(s){ s=(s||"").toString().trim(); if(s==="適合")return"ok"; if(s==="指摘")return"ng"; if(s==="対象外")return"na"; return"none"; }
+function typeFromName(s){ s=(s||"").toString().trim(); for(const k of TYPE_ORDER){ if(TYPES[k].name===s||TYPES[k].short===s) return k; } return null; }
+function parseDateCell(v){ if(v==null||v==="") return ""; if(typeof v==="number"&&XLSX.SSF){ const d=XLSX.SSF.parse_date_code(v); if(d) return `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; }
+  let s=String(v).trim().replace(/[./]/g,"-"); const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m?`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`:s; }
+
+function exportShareExcel(properties){
+  const wb=XLSX.utils.book_new();
+  const prow=[["物件名","顧客","住所"]];
+  properties.forEach(p=>prow.push([p.name,p.client,p.address]));
+  const ps=XLSX.utils.aoa_to_sheet(prow); setCols(ps,[26,16,24]); XLSX.utils.book_append_sheet(wb,ps,"物件");
+  const rows=[["物件名","顧客","住所","検査種別","検査日","検査者","カテゴリ","No","検査項目","判定","指摘内容","是正状況","是正期限"]];
+  properties.forEach(p=>{
+    if(!p.inspections.length){ rows.push([p.name,p.client,p.address,"","","","","","","","","",""]); return; }
+    p.inspections.forEach(i=>{ const order=[]; i.results.forEach(r=>{ if(!order.includes(r.category)) order.push(r.category); });
+      order.forEach(cn=>{ let n=0; i.results.filter(r=>r.category===cn).forEach(r=>{ n++;
+        rows.push([p.name,p.client,p.address,TYPES[i.type].name,i.date,i.inspector,cn,n,r.label,JLABEL[r.judge],r.issue||"",r.judge==="ng"?(r.fixed?"是正済":"未是正"):"",r.due||""]); }); });
+    });
+  });
+  const ds=XLSX.utils.aoa_to_sheet(rows); setCols(ds,[22,12,18,14,12,10,14,4,28,8,30,10,12]); XLSX.utils.book_append_sheet(wb,ds,"検査データ");
+  XLSX.writeFile(wb,`共有_検査データ_${todayISO()}.xlsx`);
+}
+
+function parseWorkbook(wb){
+  const props={}, order=[];
+  const ensure=(name,client,address)=>{ name=String(name).trim();
+    if(!props[name]){ props[name]={id:uid(),name,client:client||"",address:address||"",note:"",drawings:[],inspections:[],_insp:{}}; order.push(name); }
+    else { if(client&&!props[name].client)props[name].client=client; if(address&&!props[name].address)props[name].address=address; }
+    return props[name]; };
+  const pSheet=wb.Sheets["物件"];
+  if(pSheet){ XLSX.utils.sheet_to_json(pSheet,{header:1}).slice(1).forEach(r=>{ if(r&&r[0]) ensure(r[0],r[1]?String(r[1]).trim():"",r[2]?String(r[2]).trim():""); }); }
+  const dSheet=wb.Sheets["検査データ"]||wb.Sheets[wb.SheetNames[0]];
+  if(dSheet){
+    const rows=XLSX.utils.sheet_to_json(dSheet,{header:1});
+    let hi=rows.findIndex(r=>r&&r.indexOf&&r.indexOf("検査項目")>=0); if(hi<0) hi=0;
+    const H=(rows[hi]||[]).map(x=>String(x||"").trim()); const col=n=>H.indexOf(n);
+    const c={prop:col("物件名"),client:col("顧客"),addr:col("住所"),type:col("検査種別"),date:col("検査日"),inspector:col("検査者"),cat:col("カテゴリ"),item:col("検査項目"),judge:col("判定"),issue:col("指摘内容"),fix:col("是正状況"),due:col("是正期限")};
+    const g=(r,i)=>i>=0?r[i]:undefined;
+    rows.slice(hi+1).forEach(r=>{
+      if(!r||!r.length) return;
+      const pname=c.prop>=0?String(g(r,c.prop)||"").trim():""; if(!pname) return;
+      const P=ensure(pname, c.client>=0?String(g(r,c.client)||"").trim():"", c.addr>=0?String(g(r,c.addr)||"").trim():"");
+      const tkey=typeFromName(g(r,c.type)); const itemLabel=c.item>=0?String(g(r,c.item)||"").trim():"";
+      if(!tkey||!itemLabel) return;
+      const date=parseDateCell(g(r,c.date)); const inspector=c.inspector>=0?String(g(r,c.inspector)||"").trim():"";
+      const k=tkey+"|"+date+"|"+inspector;
+      if(!P._insp[k]){ P._insp[k]={id:uid(),type:tkey,date,inspector,results:[],created:Date.now()}; P.inspections.push(P._insp[k]); }
+      P._insp[k].results.push({id:uid(),category:c.cat>=0?String(g(r,c.cat)||"").trim():"",label:itemLabel,
+        judge:judgeFromLabel(g(r,c.judge)),issue:c.issue>=0?String(g(r,c.issue)||"").trim():"",
+        fixed:String(g(r,c.fix)||"").trim()==="是正済",due:parseDateCell(g(r,c.due))});
+    });
+  }
+  return order.map(n=>{ const p=props[n]; delete p._insp; return p; });
+}
+
+function mergeImported(cur,imported){
+  const list=cur.map(p=>({...p}));
+  imported.forEach(np=>{
+    const ex=list.find(p=>p.name===np.name);
+    if(!ex){ list.unshift(np); return; }
+    if(np.client&&!ex.client) ex.client=np.client;
+    if(np.address&&!ex.address) ex.address=np.address;
+    ex.inspections=[...ex.inspections];
+    np.inspections.forEach(ni=>{ const idx=ex.inspections.findIndex(i=>i.type===ni.type&&i.date===ni.date&&(i.inspector||"")===(ni.inspector||""));
+      if(idx>=0) ex.inspections[idx]=ni; else ex.inspections.unshift(ni); });
+  });
+  return list;
 }
 
 /* ================= サンプルデータ ================= */
